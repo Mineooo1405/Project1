@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocket Connection Test</title>
+</head>
+<body>
+    <h1>WebSocket Connection Test</h1>
+    <button onclick="testConnection()">Test Connection</button>
+    <div id="status">Status: Not connected</div>
+    <div id="log" style="border:1px solid #ccc; padding:10px; margin-top:10px; height:300px; overflow:auto;"></div>
+
+    <script>
+        function log(message) {
+            const logDiv = document.getElementById('log');
+            logDiv.innerHTML += `<div>${new Date().toLocaleTimeString()}: ${message}</div>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function testConnection() {
+            document.getElementById('status').textContent = 'Status: Connecting...';
+            log('Attempting connection...');
+            
+            const ws = new WebSocket('ws://localhost:8000/ws/direct');
+            
+            ws.onopen = () => {
+                document.getElementById('status').textContent = 'Status: Connected!';
+                document.getElementById('status').style.color = 'green';
+                log('Connection SUCCESSFUL!');
+                ws.send('test message');
+            };
+            
+            ws.onmessage = (event) => {
+                log(`Received: ${event.data}`);
+            };
+            
+            ws.onerror = (error) => {
+                document.getElementById('status').textContent = 'Status: Error connecting';
+                document.getElementById('status').style.color = 'red';
+                log('Connection ERROR');
+            };
+            
+            ws.onclose = (event) => {
+                document.getElementById('status').textContent = `Status: Disconnected (Code: ${event.code})`;
+                log(`Connection closed with code: ${event.code}`);
+            };
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,65 @@
+.trajectory-widget {
+  background-color: #fff;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  padding: 15px;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.trajectory-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.trajectory-header h3 {
+  margin: 0;
+  font-size: 16px;
+  color: #333;
+}
+
+.position-info {
+  display: flex;
+  gap: 15px;
+  font-size: 14px;
+  color: #666;
+}
+
+.trajectory-canvas-container {
+  flex-grow: 1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  position: relative;
+}
+
+.trajectory-canvas {
+  border: 1px solid #ddd;
+  background-color: #f9f9f9;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.trajectory-controls {
+  display: flex;
+  justify-content: center;
+  margin-top: 10px;
+}
+
+.trajectory-controls button {
+  background-color: #2196F3;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background-color 0.3s;
+}
+
+.trajectory-controls button:hover {
+  background-color: #0b7dda;
+}
