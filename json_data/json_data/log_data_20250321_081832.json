@@ -1,0 +1,107 @@
+[
+  {
+    "id": 1,
+    "type": "log",
+    "message": "W (4077) Motor: Setup Motor Done"
+  },
+  {
+    "id": 1,
+    "type": "log",
+    "message": "W (5497) bno055: Set calibration offsets - Ok"
+  },
+  {
+    "id": 1,
+    "type": "log",
+    "message": "W (5497) bno055: Accel offset: -17 -15 -24    Magnet: 208 -88 -168    Gyro: -1 -1 0 Acc_Radius: 1000    Mag_Radius: 1200"
+  },
+  {
+    "id": 1,
+    "type": "log",
+    "message": "W (7567) bno055: Calib - Sys: 0, Gyro: 0, Accel: 3, Mag: 0"
+  },
+  {
+    "id": 1,
+    "type": "log",
+    "message": "W (8067) bno055: Calib - Sys: 0, Gyro: 0, Accel: 3, Mag: 0"
+  },
+  {
+    "id": 1,
+    "type": "log",
+    "message": "W (8567) bno055: Calib - Sys: 0, Gyro: 0, Accel: 3, Mag: 0"
+  },
+  {
+    "id": 1,
+    "type": "log",
+    "message": "W (9067) bno055: Calib - Sys: 0, Gyro: 0, Accel: 3, Mag: 0"
+  },
+  {
+    "id": 1,
+    "type": "log",
+    "message": "W (9567) bno055: Calib - Sys: 0, Gyro: 0, Accel: 3, Mag: 0"
+  },
+  {
+    "id": 1,
+    "type": "log",
+    "message": "W (10067) bno055: Calib - Sys: 0, Gyro: 0, Accel: 3, Mag: 0"
+  },
+  {
+    "id": 1,
+    "type": "log",
+    "message": "W (10567) bno055: Calib - Sys: 0, Gyro: 0, Accel: 3, Mag: 0"
+  },
+  {
+    "id": 1,
+    "type": "log",
+    "message": "W (11067) bno055: Calib - Sys: 0, Gyro: 0, Accel: 3, Mag: 0"
+  },
+  {
+    "id": 1,
+    "type": "log",
+    "message": "W (11567) bno055: Calib - Sys: 0, Gyro: 0, Accel: 3, Mag: 0"
+  },
+  {
+    "id": 1,
+    "type": "log",
+    "message": "W (12067) bno055: Calib - Sys: 0, Gyro: 0, Accel: 3, Mag: 0"
+  },
+  {
+    "id": 1,
+    "type": "log",
+    "message": "W (12567) bno055: Calib - Sys: 1, Gyro: 0, Accel: 3, Mag: 1"
+  },
+  {
+    "id": 1,
+    "type": "log",
+    "message": "W (13067) bno055: Calib - Sys: 3, Gyro: 0, Accel: 3, Mag: 3"
+  },
+  {
+    "id": 1,
+    "type": "log",
+    "message": "W (13067) BNO055_Handler: Calib - Sys: 3, Gyro: 0, Accel: 3, Mag: 3"
+  },
+  {
+    "id": 1,
+    "type": "log",
+    "message": "W (13187) BNO055_Handler: Accel offset: -17 -15 -24    Magnet: -172 -768 -52    Gyro: -1 -1 0 Acc_Radius: 1000    Mag_Radius: 1112"
+  },
+  {
+    "id": 1,
+    "type": "log",
+    "message": "W (13207) BNO055_Handler: Calibration data saved successfully"
+  },
+  {
+    "id": 1,
+    "type": "log",
+    "message": "W (23917) PID: Updated Motor 1 PID values to Kp: 3.000000 Ki: 0.600000 Kd: 0.500000"
+  },
+  {
+    "id": 1,
+    "type": "log",
+    "message": "W (24247) PID: Updated Motor 2 PID values to Kp: 3.000000 Ki: 0.600000 Kd: 0.500000"
+  },
+  {
+    "id": 1,
+    "type": "log",
+    "message": "W (24657) PID: Updated Motor 3 PID values to Kp: 3.000000 Ki: 0.600000 Kd: 0.500000"
+  }
+]
