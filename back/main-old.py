@@ -245,10 +245,6 @@ def add_rpm_log(motor_id: int, rpm_value: float, db: Session = Depends(get_db)):
     return {"message": "RPM data stored"}
 
 # ==============================
-# 📌 VẼ QUỸ ĐẠO ROBOT
-# ==============================
-
-# ==============================
 # 📌 API `POST` Để Gửi Dữ Liệu Quỹ Đạo Robot
 # ==============================
 class TrajectoryData(BaseModel):

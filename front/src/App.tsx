@@ -19,6 +19,7 @@ import PlacedWidget from "./components/PlacedWidget";
 import IMUWidget from './components/IMUWidget';
 import IMUVisualizationWidget from "./components/IMUVisualizationWidget";
 import TCPServerStatusButton from './components/TCPServerStatusButton';
+import RobotControlPanel from './components/RobotControlPanel';
 
 // Widget option definition
 interface WidgetOption {
@@ -424,7 +425,7 @@ const App: React.FC = () => {
                 </button>
               </div>
             )}
-          </div>
+          </div>  
         </RobotProvider>
       </WebSocketProvider>
     </DndProvider>

@@ -59,62 +59,6 @@ app.state.start_time = time.time()
 import socket
 import traceback
 
-# Add this function to forward commands to the TCP server
-async def forward_to_tcp_server(data, log_prefix=""):
-    """Forward a command to the TCP server and get the response"""
-    try:
-        robot_id = data.get("robot_id", "unknown")
-        command_type = data.get("type", "unknown")
-        
-        logger.info(f"{log_prefix}=== FORWARDING TO TCP SERVER ===")
-        logger.info(f"{log_prefix}Command type: {command_type}")
-        logger.info(f"{log_prefix}Robot ID: {robot_id}")
-        logger.info(f"{log_prefix}Data: {json.dumps(data)[:200]}..." if len(json.dumps(data)) > 200 else f"{log_prefix}Data: {json.dumps(data)}")
-        
-        # Create TCP socket
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(5.0)  # 5 second timeout
-        
-        # Connect to TCP server
-        logger.info(f"{log_prefix}Connecting to TCP server at localhost:9000...")
-        s.connect(('localhost', 9000))
-        
-        # Receive welcome message
-        welcome = s.recv(1024).decode()
-        logger.info(f"{log_prefix}TCP server welcome: {welcome}")
-        
-        # Format and send message
-        message = json.dumps(data) + '\n'
-        logger.info(f"{log_prefix}Sending message ({len(message)} bytes)...")
-        s.sendall(message.encode())
-        
-        # Wait for response
-        logger.info(f"{log_prefix}Waiting for response...")
-        response = s.recv(1024).decode()
-        logger.info(f"{log_prefix}TCP server response: {response}")
-        
-        # Close connection
-        s.close()
-        logger.info(f"{log_prefix}TCP connection closed")
-        
-        # Parse response
-        try:
-            return json.loads(response)
-        except json.JSONDecodeError:
-            logger.error(f"{log_prefix}Invalid JSON response from TCP server: {response}")
-            return {"status": "error", "message": "Invalid response from TCP server"}
-            
-    except socket.timeout:
-        logger.error(f"{log_prefix}TCP server connection timed out")
-        return {"status": "error", "message": "TCP server connection timed out"}
-    except ConnectionRefusedError:
-        logger.error(f"{log_prefix}TCP server connection refused - is the TCP server running?")
-        return {"status": "error", "message": "TCP server connection refused"}
-    except Exception as e:
-        logger.error(f"{log_prefix}TCP forwarding error: {str(e)}")
-        logger.error(traceback.format_exc())
-        return {"status": "error", "message": f"TCP error: {str(e)}"}
-
 # Connection lists for different robot endpoints
 robot_connections = {
     "robot1": [],
@@ -155,7 +99,7 @@ async def handle_robot_connection(ws: WebSocket, robot_id: str):
     try:
         # Accept connection immediately
         await ws.accept()
-        print(f"✅ Accepted {robot_id} connection from {client_id}")
+        print(f"Accepted {robot_id} connection from {client_id}")
         
         # Store metadata
         ws.connected_since = time.time()
@@ -352,7 +296,7 @@ async def robot_websocket(websocket: WebSocket, robot_id: str):
     try:
         # Accept connection immediately
         await websocket.accept()
-        print(f"✅ Accepted {robot_id} connection from {client_id}")
+        print(f"Accepted {robot_id} connection from {client_id}")
         
         # Store metadata
         websocket.connected_since = time.time()
@@ -908,39 +852,6 @@ async def process_robot_command(robot_id: str, data: dict, ws: WebSocket):
             
             # Forward to TCP server
             tcp_prefix = f"[{robot_id}:MOTOR] "
-            tcp_data = {
-                "type": "motor_control",
-                "robot_id": robot_id,
-                "speeds": speeds,
-                "timestamp": time.time()
-            }
-            
-            # Forward to TCP server asynchronously
-            try:
-                # Wait for TCP server response
-                tcp_response = await forward_to_tcp_server(tcp_data, tcp_prefix)
-                
-                # Send response to client
-                await ws.send_text(json.dumps({
-                    **response_base,
-                    "type": "motor_response",
-                    "status": tcp_response.get("status", "error"),
-                    "message": tcp_response.get("message", "Error communicating with TCP server"),
-                    "speeds": speeds
-                }))
-                
-                logger.info(f"Motor control response sent to client: {speeds}")
-                
-            except Exception as e:
-                logger.error(f"Error forwarding motor control to TCP server: {str(e)}")
-                logger.error(traceback.format_exc())
-                
-                # Send error response to client
-                await ws.send_text(json.dumps({
-                    **response_base,
-                    "type": "error",
-                    "message": f"Error sending motor control command: {str(e)}"
-                }))
             
         # Xử lý lệnh chuyển động
         elif command_type == "motion_command":
@@ -1239,197 +1150,6 @@ async def get_connection_status():
             "message": str(e),
             "timestamp": time.time()
         }
-
-# Endpoint để tính quỹ đạo từ dữ liệu encoder
-@app.get("/api/calculate-trajectory/{robot_id}")
-async def calculate_trajectory(
-    robot_id: str, 
-    start_time: str = None, 
-    end_time: str = None, 
-    db: Session = Depends(get_db)
-):
-    try:
-        # Chuyển đổi chuỗi thời gian thành datetime nếu có
-        start_datetime = None
-        end_datetime = None
-        
-        if start_time:
-            start_datetime = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
-        if end_time:
-            end_datetime = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
-            
-        # Tính quỹ đạo từ dữ liệu encoder
-        trajectory = TrajectoryCalculator.process_encoder_data(
-            db, robot_id, start_datetime, end_datetime
-        )
-        
-        # Trả về kết quả
-        return {
-            "status": "success",
-            "robot_id": robot_id,
-            "trajectory": trajectory,
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        logger.error(f"Error calculating trajectory: {str(e)}")
-        raise HTTPException(
-            status_code=500, 
-            detail=f"Error calculating trajectory: {str(e)}"
-        )
-
-@app.get("/api/robot-status/{robot_id}")
-async def get_robot_status(robot_id: str, db: Session = Depends(get_db)):
-    try:
-        # Lấy dữ liệu encoder mới nhất
-        latest_encoder = db.query(EncoderData).filter(
-            EncoderData.robot_id == robot_id
-        ).order_by(EncoderData.timestamp.desc()).first()
-        
-        # Lấy dữ liệu quỹ đạo mới nhất
-        latest_trajectory = db.query(TrajectoryData).filter(
-            TrajectoryData.robot_id == robot_id
-        ).order_by(TrajectoryData.timestamp.desc()).first()
-        
-        # Lấy cấu hình PID
-        pid_configs = db.query(PIDConfig).filter(
-            PIDConfig.robot_id == robot_id
-        ).all()
-        
-        # Tạo dữ liệu trả về
-        result = {
-            "status": "success",
-            "robot_id": robot_id,
-            "timestamp": datetime.now().isoformat(),
-            "data": {
-                "position": {
-                    "x": latest_trajectory.current_x if latest_trajectory else 0,
-                    "y": latest_trajectory.current_y if latest_trajectory else 0,
-                    "theta": latest_trajectory.current_theta if latest_trajectory else 0
-                } if latest_trajectory else {"x": 0, "y": 0, "theta": 0},
-                "encoders": {
-                    "values": latest_encoder.values if latest_encoder else [0, 0, 0],
-                    "rpm": latest_encoder.rpm if latest_encoder else [0, 0, 0]
-                } if latest_encoder else {"values": [0, 0, 0], "rpm": [0, 0, 0]},
-                "pid": {}
-            }
-        }
-        
-        # Thêm dữ liệu PID
-        for pid in pid_configs:
-            result["data"]["pid"][f"motor{pid.motor_id}"] = {
-                "kp": pid.kp,
-                "ki": pid.ki,
-                "kd": pid.kd
-            }
-        
-        return result
-    except Exception as e:
-        logger.error(f"Error getting robot status: {str(e)}")
-        
-        # Trả về dữ liệu giả nếu có lỗi
-        return {
-            "status": "error",
-            "robot_id": robot_id,
-            "timestamp": datetime.now().isoformat(),
-            "message": f"Error retrieving robot status: {str(e)}",
-            "data": {
-                "position": {"x": 0, "y": 0, "theta": 0},
-                "encoders": {"values": [0, 0, 0], "rpm": [0, 0, 0]},
-                "pid": {
-                    "motor1": {"kp": 0, "ki": 0, "kd": 0},
-                    "motor2": {"kp": 0, "ki": 0, "kd": 0},
-                    "motor3": {"kp": 0, "ki": 0, "kd": 0}
-                }
-            }
-        }
-
-@app.post("/api/update-pid/{robot_id}")
-async def update_pid_config(
-    robot_id: str, 
-    motor_id: int, 
-    kp: float, 
-    ki: float, 
-    kd: float, 
-    db: Session = Depends(get_db)
-):
-    try:
-        # Kiểm tra xem cấu hình đã tồn tại chưa
-        existing_pid = db.query(PIDConfig).filter(
-            PIDConfig.robot_id == robot_id,
-            PIDConfig.motor_id == motor_id
-        ).first()
-        
-        if existing_pid:
-            # Cập nhật cấu hình hiện có
-            existing_pid.kp = kp
-            existing_pid.ki = ki
-            existing_pid.kd = kd
-            existing_pid.timestamp = datetime.now()
-        else:
-            # Tạo cấu hình mới
-            new_pid = PIDConfig(
-                robot_id=robot_id,
-                motor_id=motor_id,
-                kp=kp,
-                ki=ki,
-                kd=kd,
-                timestamp=datetime.now()
-            )
-            db.add(new_pid)
-            
-        db.commit()
-        
-        return {
-            "status": "success",
-            "robot_id": robot_id,
-            "motor_id": motor_id,
-            "parameters": {
-                "kp": kp,
-                "ki": ki,
-                "kd": kd
-            },
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": str(e),
-            "timestamp": datetime.now().isoformat()
-        }
-
-@app.get("/api/pid-config/{robot_id}")
-async def get_pid_config(robot_id: str, db: Session = Depends(get_db)):
-    try:
-        pid_configs = db.query(PIDConfig).filter(
-            PIDConfig.robot_id == robot_id
-        ).all()
-        
-        result = {
-            "status": "success",
-            "robot_id": robot_id,
-            "configs": [],
-            "timestamp": datetime.now().isoformat()
-        }
-        
-        for config in pid_configs:
-            result["configs"].append({
-                "motor_id": config.motor_id,
-                "parameters": {
-                    "kp": config.kp,
-                    "ki": config.ki,
-                    "kd": config.kd
-                },
-                "timestamp": config.timestamp.isoformat()
-            })
-            
-        return result
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": str(e),
-            "timestamp": datetime.now().isoformat()
-        }
-
 
 @app.get("/api/check-tcp-server")
 async def check_tcp_server():
