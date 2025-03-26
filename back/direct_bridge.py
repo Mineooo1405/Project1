@@ -5,6 +5,7 @@ import json
 import time
 import logging
 import threading
+import os
 
 # Configure logging
 logging.basicConfig(
@@ -17,8 +18,12 @@ logger = logging.getLogger("direct_bridge")
 tcp_clients = {}  # robot_id -> socket
 ws_clients = {}   # client_id -> websocket
 
+# Đọc cấu hình port từ biến môi trường hoặc sử dụng mặc định
+TCP_PORT = int(os.environ.get("TCP_PORT", "9000"))
+WS_PORT = int(os.environ.get("WS_BRIDGE_PORT", "9003"))
+
 class DirectBridge:
-    def __init__(self, tcp_port=9000, ws_port=9003):
+    def __init__(self, tcp_port=TCP_PORT, ws_port=WS_PORT):
         self.tcp_port = tcp_port
         self.ws_port = ws_port
         self.tcp_server = None
@@ -29,17 +34,17 @@ class DirectBridge:
         """Start both TCP and WebSocket servers"""
         self.running = True
         
-        # Start TCP server
+        # Start TCP server - Sửa 'localhost' thành '0.0.0.0'
         self.tcp_server = await asyncio.start_server(
-            self.handle_tcp_client, 'localhost', self.tcp_port
+            self.handle_tcp_client, '0.0.0.0', self.tcp_port
         )
-        logger.info(f"TCP server started on port {self.tcp_port}")
+        logger.info(f"TCP server started on 0.0.0.0:{self.tcp_port}")
         
-        # Start WebSocket server
+        # Start WebSocket server - Sửa cả WebSocket nữa
         self.ws_server = await websockets.serve(
-            self.handle_ws_client, 'localhost', self.ws_port
+            self.handle_ws_client, '0.0.0.0', self.ws_port
         )
-        logger.info(f"WebSocket server started on port {self.ws_port}")
+        logger.info(f"WebSocket server started on 0.0.0.0:{self.ws_port}")
         
         # Keep servers running
         await asyncio.gather(
