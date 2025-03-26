@@ -21,6 +21,7 @@ const PIDControlWidget: React.FC = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [isConnected, setIsConnected] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   
   // Kết nối đến TCP WebSocket service khi component được tạo
   useEffect(() => {
@@ -34,7 +35,9 @@ const PIDControlWidget: React.FC = () => {
     tcpWebSocketService.onConnectionChange(handleConnectionChange);
     
     // Kết nối đến TCP server
-    tcpWebSocketService.connect();
+    if (!tcpWebSocketService.isConnected()) {
+      tcpWebSocketService.connect();
+    }
     
     // Đăng ký nhận phản hồi
     const handlePidResponse = (response: any) => {
@@ -75,35 +78,31 @@ const PIDControlWidget: React.FC = () => {
     }));
   };
   
-  // Lưu cấu hình PID
-  const handleSave = () => {
-    if (!isConnected) return;
+  // Yêu cầu cập nhật PID
+  const handleSave = async () => {
+    if (!isConnected) {
+      setErrorMessage("TCP connection not available");
+      return;
+    }
     
     setIsSaving(true);
-    setSaveStatus('idle');
     
-    // Log chi tiết
-    console.log('======= CHI TIẾT CẤU HÌNH PID =======');
-    console.log(`Robot ID: ${robotId}`);
-    console.log(`Motor ID: ${motorId}`);
-    console.log(`Kp: ${pidValues.kp}`);
-    console.log(`Ki: ${pidValues.ki}`);
-    console.log(`Kd: ${pidValues.kd}`);
-    console.log('=======================================');
-    
-    // Sử dụng hàm tiện ích để gửi cấu hình PID
-    const sent = tcpWebSocketService.sendPidConfig(
-      robotId,
-      motorId,
-      pidValues
-    );
-    
-    if (sent) {
-      console.log('Đã gửi cấu hình PID đến TCP server');
-    } else {
-      console.error('Không thể gửi cấu hình PID đến TCP server');
-      setIsSaving(false);
+    try {
+      tcpWebSocketService.sendPidConfig(
+        robotId,
+        motorId,
+        pidValues
+      );
+      
+      // Hiển thị thông báo thành công
+      setSaveStatus('success');
+      setTimeout(() => setSaveStatus('idle'), 3000);
+    } catch (error) {
       setSaveStatus('error');
+      setErrorMessage("Failed to save PID values");
+      setTimeout(() => setSaveStatus('idle'), 3000);
+    } finally {
+      setIsSaving(false);
     }
   };
   

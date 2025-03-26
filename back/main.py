@@ -2,24 +2,51 @@ import asyncio
 import json
 import time
 import traceback
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, status, Header
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from contextlib import asynccontextmanager
-from database import SessionLocal
-from database import EncoderData, TrajectoryData, PIDConfig, IMUData
+# Replace old database imports with new ones
+from robot_database import SessionLocal, Robot, EncoderData, IMUData, LogData, TrajectoryCalculator, TrajectoryData
 from websockets.exceptions import ConnectionClosedOK, ConnectionClosedError
 import logging
-from database import TrajectoryCalculator, JSONDataHandler
-import math
-import random
 from data_converter import DataConverter
 from trajectory_service import TrajectoryService
 from datetime import datetime, timedelta
+import math
+import random
+import numpy as np
+from fastapi.security import APIKeyHeader
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("websocket")
+
+# Add missing TrajectoryData model since we need it and it's not in robot_database.py
+from sqlalchemy import create_engine, Column, Integer, Float, String, Boolean, DateTime, ForeignKey, ARRAY
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.dialects.postgresql import JSONB
+from robot_database import Base
+
+
+    # rest of definition...
+    
+class PIDConfig(Base):
+    __tablename__ = "pid_configs"
+    __table_args__ = {'extend_existing': True}  # Add this line
+    id = Column(Integer, primary_key=True)
+    robot_id = Column(String, index=True)
+    motor_id = Column(Integer)  # 1, 2, 3
+    kp = Column(Float)
+    ki = Column(Float)
+    kd = Column(Float)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+    raw_data = Column(JSONB, nullable=True)  # Store full JSON message
+    robot_data = Column(Boolean, default=True)  # Flag to differentiate data source
+
+# Create tables if they don't exist
+from robot_database import engine
+Base.metadata.create_all(bind=engine)
 
 # Database session
 def get_db():
@@ -230,274 +257,17 @@ async def send_heartbeat(ws: WebSocket, robot_id: str):
         # Normal cancellation when connection closes
         pass
 
-# WebSocket endpoints for each robot
-@app.websocket("/ws/robot1")
-async def robot1_endpoint(ws: WebSocket):
-    await handle_robot_connection(ws, "robot1")
-
-@app.websocket("/ws/robot2")
-async def robot2_endpoint(ws: WebSocket):
-    await handle_robot_connection(ws, "robot2")
-
-@app.websocket("/ws/robot3")
-async def robot3_endpoint(ws: WebSocket):
-    await handle_robot_connection(ws, "robot3")
-
-@app.websocket("/ws/robot4")
-async def robot4_endpoint(ws: WebSocket):
-    await handle_robot_connection(ws, "robot4")
-
 @app.websocket("/ws/server")
 async def server_endpoint(ws: WebSocket):
     await handle_robot_connection(ws, "server")
 
-@app.websocket("/ws/{robot_id}/motor")
-async def motor_endpoint(ws: WebSocket, robot_id: str):
-    """WebSocket endpoint for motor control"""
-    client_id = f"{ws.client.host}:{ws.client.port}"
-    print(f"Motor control connection request from {client_id} for {robot_id}")
-    
-    await handle_robot_connection(ws, f"{robot_id}_motor")
-
-@app.websocket("/ws/{robot_id}/pid")
-async def pid_endpoint(ws: WebSocket, robot_id: str):
-    """WebSocket endpoint for PID configuration"""
-    client_id = f"{ws.client.host}:{ws.client.port}"
-    print(f"PID configuration connection request from {client_id} for {robot_id}")
-    
-    await handle_robot_connection(ws, f"{robot_id}_pid")
-
-@app.websocket("/ws/{robot_id}/trajectory")
-async def trajectory_endpoint(ws: WebSocket, robot_id: str):
-    """WebSocket endpoint for trajectory visualization"""
-    client_id = f"{ws.client.host}:{ws.client.port}"
-    print(f"Trajectory visualization connection request from {client_id} for {robot_id}")
-    
-    await handle_robot_connection(ws, f"{robot_id}_trajectory")
-
-@app.websocket("/ws/{robot_id}/imu")
-async def imu_endpoint(ws: WebSocket, robot_id: str):
-    """WebSocket endpoint for IMU data visualization"""
-    client_id = f"{ws.client.host}:{ws.client.port}"
-    print(f"IMU data connection request from {client_id} for {robot_id}")
-    
-    await handle_robot_connection(ws, f"{robot_id}_imu")
-
-# WebSocket endpoint for handling encoder data and updating trajectory
-@app.websocket("/ws/robot/{robot_id}")
-async def robot_websocket(websocket: WebSocket, robot_id: str):
-    client_id = f"{websocket.client.host}:{websocket.client.port}"
-    print(f"Connection request from {client_id} for {robot_id}")
-    print(f"Active connections for {robot_id}: {len(robot_connections[robot_id])}")
-    
-    # Khởi tạo heartbeat task
-    heartbeat_task = None
-    
-    try:
-        # Accept connection immediately
-        await websocket.accept()
-        print(f"Accepted {robot_id} connection from {client_id}")
-        
-        # Store metadata
-        websocket.connected_since = time.time()
-        websocket.last_activity = time.time()
-        websocket.client_id = client_id
-        websocket.robot_id = robot_id
-        websocket.manual_disconnect = False  # Flag to track manual disconnection
-        
-        # Add to connection list
-        if websocket not in robot_connections[robot_id]:
-            robot_connections[robot_id].append(websocket)
-        
-        # Send confirmation
-        await websocket.send_text(json.dumps({
-            "status": "connected", 
-            "robot_id": robot_id,
-            "timestamp": time.time()
-        }))
-        
-        # Khởi động heartbeat để giữ kết nối
-        heartbeat_task = asyncio.create_task(send_heartbeat(websocket, robot_id))
-        
-        # Initialize robot position
-        TrajectoryService.initialize_robot_position(robot_id)
-        
-        # Main message loop - KHÔNG tự động ngắt kết nối
-        while True:
-            try:
-                # Thời gian chờ đọc message cao hơn để tránh timeout
-                data = await asyncio.wait_for(websocket.receive_text(), timeout=MAX_INACTIVE_TIME)
-                websocket.last_activity = time.time()
-                
-                # Add message received logging
-                ip_addr = websocket.client.host
-                logger.info(f"=== FRONTEND MESSAGE RECEIVED ===")
-                logger.info(f"From: {ip_addr} for robot: {robot_id}")
-                logger.info(f"Message: {data[:200]}..." if len(data) > 200 else f"Message: {data}")
-                
-                # Process command
-                try:
-                    json_data = json.loads(data)
-                    
-                    # Kiểm tra xem client có yêu cầu ngắt kết nối không
-                    if json_data.get("type") == "manual_disconnect":
-                        print(f"Client {client_id} requested manual disconnect from {robot_id}")
-                        websocket.manual_disconnect = True
-                        await websocket.send_text(json.dumps({
-                            "type": "disconnect_confirmed",
-                            "robot_id": robot_id,
-                            "timestamp": time.time(),
-                            "message": "Disconnect request accepted"
-                        }))
-                        break
-                    
-                    command_type = json_data.get("type", "")
-                    response_base = {
-                        "timestamp": time.time(),
-                        "robot_id": robot_id
-                    }
-                    
-                    # Add handler for encoder data
-                    if command_type == "get_encoder_data":
-                        try:
-                            db = SessionLocal()
-                            
-                            # Get latest encoder data
-                            latest_encoders = DataConverter.get_latest_data_by_robot(db, EncoderData, robot_id, 1)
-                            
-                            # Also get latest IMU data for orientation
-                            latest_imu = DataConverter.get_latest_data_by_robot(db, IMUData, robot_id, 1)
-                            
-                            if latest_encoders and len(latest_encoders) > 0:
-                                # Convert encoder data to frontend format
-                                encoder_json = DataConverter.encoder_to_frontend(latest_encoders[0])
-                                
-                                # Convert IMU data if available
-                                imu_json = None
-                                if latest_imu and len(latest_imu) > 0:
-                                    imu_json = DataConverter.imu_to_frontend(latest_imu[0])
-                                
-                                # Update trajectory based on encoder data
-                                updated_position = TrajectoryService.calculate_position_from_encoder(
-                                    robot_id, encoder_json, imu_json
-                                )
-                                
-                                # Every 10 updates, save the trajectory to database
-                                if updated_position is not None and len(updated_position["points"]["x"]) % 10 == 0:
-                                    TrajectoryService.save_trajectory_to_db(db, robot_id)
-                                
-                                # Send encoder data response
-                                await websocket.send_text(json.dumps({
-                                    **response_base,
-                                    "type": "encoder_data",
-                                    **encoder_json
-                                }))
-                                
-                                # Also send updated trajectory
-                                await websocket.send_text(json.dumps({
-                                    **response_base,
-                                    "type": "trajectory_update",
-                                    "trajectory": {
-                                        "current_position": {
-                                            "x": updated_position["x"],
-                                            "y": updated_position["y"],
-                                            "theta": updated_position["theta"]
-                                        },
-                                        "points": updated_position["points"],
-                                        "timestamp": datetime.now().isoformat()
-                                    }
-                                }))
-                                
-                                logger.info(f"Sent encoder data and trajectory update for {robot_id}")
-                            else:
-                                # ... existing code for sending fallback data ...
-                                pass
-                                
-                        except Exception as e:
-                            logger.error(f"Error processing encoder data: {str(e)}")
-                            logger.error(traceback.format_exc())
-                        finally:
-                            db.close()
-                    
-                    # Add a dedicated endpoint for getting the trajectory
-                    elif command_type == "get_trajectory":
-                        try:
-                            # Get current trajectory from in-memory service
-                            position = TrajectoryService.get_robot_position(robot_id)
-                            
-                            # Create response with current trajectory
-                            await websocket.send_text(json.dumps({
-                                **response_base,
-                                "type": "trajectory_data",
-                                "trajectory": {
-                                    "current_position": {
-                                        "x": position["x"],
-                                        "y": position["y"],
-                                        "theta": position["theta"]
-                                    },
-                                    "points": position["points"],
-                                    "timestamp": datetime.now().isoformat()
-                                }
-                            }))
-                            
-                            logger.info(f"Sent current trajectory for {robot_id}")
-                        except Exception as e:
-                            logger.error(f"Error getting trajectory: {str(e)}")
-                            logger.error(traceback.format_exc())
-                    
-                    else:
-                        await process_robot_command(robot_id, json_data, websocket)
-                except json.JSONDecodeError:
-                    await websocket.send_text(json.dumps({
-                        "status": "error",
-                        "message": "Invalid JSON data",
-                        "timestamp": time.time()
-                    }))
-            except asyncio.TimeoutError:
-                # Không ngắt kết nối khi timeout - chỉ log và gửi ping
-                current_time = time.time()
-                inactive_time = current_time - websocket.last_activity
-                print(f"Client {client_id} inactive for {inactive_time:.1f}s")
-                
-                # Gửi ping để kiểm tra kết nối vẫn sống
-                try:
-                    await websocket.send_text(json.dumps({
-                        "type": "ping",
-                        "robot_id": robot_id,
-                        "timestamp": current_time
-                    }))
-                    websocket.last_activity = current_time
-                except Exception as e:
-                    print(f"Cannot send ping to inactive client {client_id}: {e}")
-                    break  # Chỉ ngắt kết nối khi không gửi được tin nhắn
-            except WebSocketDisconnect:
-                print(f"Client {client_id} disconnected from {robot_id}")
-                break
-            except ConnectionClosedOK:
-                print(f"Client {client_id} closed connection normally from {robot_id}")
-                break
-            except ConnectionClosedError:
-                print(f"Client {client_id} connection closed with error from {robot_id}")
-                break
-            except Exception as e:
-                print(f"Error in {robot_id} loop: {e}")
-                break
-    
-    except Exception as e:
-        print(f"ERROR in {robot_id} connection: {e}")
-    
-    finally:
-        # Hủy heartbeat task khi kết thúc
-        if heartbeat_task and not heartbeat_task.done():
-            heartbeat_task.cancel()
-            
-        # Clean up
-        if websocket in robot_connections[robot_id]:
-            robot_connections[robot_id].remove(websocket)
-        
-        disconnect_type = "manual" if getattr(websocket, "manual_disconnect", False) else "automatic"
-        print(f"{robot_id} connection closed for {client_id} ({disconnect_type} disconnect)")
-        print(f"Remaining {robot_id} connections: {len(robot_connections[robot_id])}")
+@app.websocket("/ws/{robot_id}")
+async def robot_endpoint(websocket: WebSocket, robot_id: str):
+    # Handle specialized endpoints with parameter
+    if "/" in robot_id:
+        parts = robot_id.split("/", 1)
+        robot_id = f"{parts[0]}_{parts[1]}"
+    await handle_robot_connection(websocket, robot_id)
 
 # Send robot data from database when connected
 async def send_dummy_robot_data(ws: WebSocket, robot_id: str):
@@ -574,30 +344,8 @@ async def send_dummy_robot_data(ws: WebSocket, robot_id: str):
         
         # Add IMU data if available
         if latest_imu:
-            orientation = {}
-            if hasattr(latest_imu, "raw_data") and latest_imu.raw_data and "orientation" in latest_imu.raw_data:
-                orientation = latest_imu.raw_data.get("orientation", {})
-            else:
-                orientation = {
-                    "roll": random.uniform(-0.1, 0.1),
-                    "pitch": random.uniform(-0.1, 0.1), 
-                    "yaw": robot_data["status"]["position"]["theta"]
-                }
-                
-            robot_data["imu"] = {
-                "orientation": orientation,
-                "acceleration": {
-                    "x": latest_imu.accel_x,
-                    "y": latest_imu.accel_y,
-                    "z": latest_imu.accel_z
-                },
-                "angular_velocity": {
-                    "x": latest_imu.gyro_x,
-                    "y": latest_imu.gyro_y,
-                    "z": latest_imu.gyro_z
-                },
-                "timestamp": latest_imu.timestamp.isoformat()
-            }
+            imu_data = DataConverter.imu_to_frontend(latest_imu)
+            robot_data["imu"] = imu_data
         else:
             # Generate random IMU data as fallback
             robot_data["imu"] = {
@@ -607,14 +355,14 @@ async def send_dummy_robot_data(ws: WebSocket, robot_id: str):
                     "yaw": robot_data["status"]["position"]["theta"]
                 },
                 "acceleration": {
-                    "x": random.uniform(-0.2, 0.2),
-                    "y": random.uniform(-0.2, 0.2),
-                    "z": 9.8 + random.uniform(-0.1, 0.1)
+                    "x": 0.0,
+                    "y": 0.0,
+                    "z": 9.8
                 },
                 "angular_velocity": {
-                    "x": random.uniform(-0.05, 0.05),
-                    "y": random.uniform(-0.05, 0.05),
-                    "z": random.uniform(-0.05, 0.05)
+                    "x": 0.0,
+                    "y": 0.0,
+                    "z": 0.0
                 },
                 "timestamp": datetime.now().isoformat()
             }
@@ -671,72 +419,14 @@ async def process_robot_command(robot_id: str, data: dict, ws: WebSocket):
                 # Create database session
                 db = SessionLocal()
                 
-                # Get latest encoder data
-                latest_encoders = DataConverter.get_latest_data_by_robot(db, EncoderData, robot_id, 1)
-                
-                # Get latest trajectory data for position
-                latest_trajectories = DataConverter.get_latest_data_by_robot(db, TrajectoryData, robot_id, 1)
-                
-                # Get PID configurations
-                pid_configs = db.query(PIDConfig).filter(
-                    PIDConfig.robot_id == robot_id
-                ).all()
-                
-                # Build response with real data when available
-                encoder_data = latest_encoders[0] if latest_encoders else None
-                trajectory_data = latest_trajectories[0] if latest_trajectories else None
-                
-                # Convert PID data
-                pid_data = {}
-                for config in pid_configs:
-                    pid_config_json = DataConverter.pid_to_frontend(config)
-                    motor_id = f"motor{pid_config_json['motor_id']}"
-                    pid_data[motor_id] = {
-                        "kp": pid_config_json["kp"],
-                        "ki": pid_config_json["ki"],
-                        "kd": pid_config_json["kd"]
-                    }
-                
-                # If no PID data found, provide defaults
-                if not pid_data:
-                    pid_data = {
-                        "motor1": {"kp": 0.5, "ki": 0.1, "kd": 0.05},
-                        "motor2": {"kp": 0.5, "ki": 0.1, "kd": 0.05},
-                        "motor3": {"kp": 0.5, "ki": 0.1, "kd": 0.05}
-                    }
-                
-                # Process encoder data if available
-                encoder_values = [1000, 1100, 1200]
-                encoder_rpm = [50, 60, 70]
-                if encoder_data:
-                    encoder_json = DataConverter.encoder_to_frontend(encoder_data)
-                    encoder_values = encoder_json["values"]
-                    encoder_rpm = encoder_json["rpm"]
-                
-                # Process position data if available
-                position = {"x": 1.25, "y": 0.75, "theta": 0.5}
-                if trajectory_data:
-                    trajectory_json = DataConverter.trajectory_to_frontend(trajectory_data)
-                    position = trajectory_json["current_position"]
+                # Use the centralized function
+                status_data = await get_robot_status_data(robot_id, db)
                 
                 # Send the robot status data
                 await ws.send_text(json.dumps({
                     **response_base,
                     "type": "robot_status",
-                    "status": {
-                        "connected": True,
-                        "lastUpdate": datetime.now().isoformat(),
-                        "encoders": {
-                            "values": encoder_values,
-                            "rpm": encoder_rpm
-                        },
-                        "position": position,
-                        "battery": {
-                            "voltage": 11.8,  # This would come from a battery table if available
-                            "percent": 85
-                        },
-                        "pid": pid_data
-                    }
+                    "status": status_data
                 }))
                 logger.info(f"Sent database robot status for {robot_id}")
             except Exception as e:
@@ -1192,6 +882,186 @@ async def check_tcp_server():
             "status": "error",
             "message": f"Error checking TCP server: {str(e)}"
         }
+
+async def get_robot_status_data(robot_id: str, db: Session = None):
+    """Centralized function for getting robot status data from DB"""
+    close_db = False
+    if db is None:
+        db = SessionLocal()
+        close_db = True
+        
+    try:
+        # Get latest encoder data
+        latest_encoders = DataConverter.get_latest_data_by_robot(db, EncoderData, robot_id, 1)
+        
+        # Get latest trajectory data for position
+        latest_trajectories = DataConverter.get_latest_data_by_robot(db, TrajectoryData, robot_id, 1)
+        
+        # Get PID configurations
+        pid_configs = db.query(PIDConfig).filter(
+            PIDConfig.robot_id == robot_id
+        ).all()
+        
+        # Build response with real data when available
+        encoder_data = latest_encoders[0] if latest_encoders else None
+        trajectory_data = latest_trajectories[0] if latest_trajectories else None
+        
+        # Convert PID data
+        pid_data = {}
+        for config in pid_configs:
+            pid_config_json = DataConverter.pid_to_frontend(config)
+            motor_id = f"motor{pid_config_json['motor_id']}"
+            pid_data[motor_id] = {
+                "kp": pid_config_json["kp"],
+                "ki": pid_config_json["ki"],
+                "kd": pid_config_json["kd"]
+            }
+        
+        # If no PID data found, provide defaults
+        if not pid_data:
+            pid_data = {
+                "motor1": {"kp": 0.5, "ki": 0.1, "kd": 0.05},
+                "motor2": {"kp": 0.5, "ki": 0.1, "kd": 0.05},
+                "motor3": {"kp": 0.5, "ki": 0.1, "kd": 0.05}
+            }
+        
+        # Process encoder data if available
+        encoder_values = [1000, 1100, 1200]
+        encoder_rpm = [50, 60, 70]
+        if encoder_data:
+            encoder_json = DataConverter.encoder_to_frontend(encoder_data)
+            encoder_values = encoder_json.get("values", encoder_values)
+            encoder_rpm = encoder_json.get("rpm", encoder_rpm)
+        
+        # Process position data if available
+        position = {"x": 1.25, "y": 0.75, "theta": 0.5}
+        if trajectory_data:
+            trajectory_json = DataConverter.trajectory_to_frontend(trajectory_data)
+            position = trajectory_json.get("current_position", position)
+        
+        # Return the robot status data
+        return {
+            "connected": True,
+            "lastUpdate": datetime.now().isoformat(),
+            "encoders": {
+                "values": encoder_values,
+                "rpm": encoder_rpm
+            },
+            "position": position,
+            "battery": {
+                "voltage": 11.8,
+                "percent": 85
+            },
+            "pid": pid_data
+        }
+        
+    finally:
+        if close_db:
+            db.close()
+
+# Import cấu hình
+from config import API_KEY
+
+# Thiết lập xác thực API key
+api_key_header = APIKeyHeader(name="Authorization", auto_error=True)
+
+# Hàm để xác thực API key từ header
+async def verify_api_key(authorization: str = Header(None)):
+    if not authorization:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API Key header không tồn tại"
+        )
+    
+    # Kiểm tra định dạng "Bearer {API_KEY}"
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API Key không đúng định dạng. Sử dụng 'Bearer {api_key}'"
+        )
+    
+    # Lấy API key từ header
+    token = authorization.replace("Bearer ", "")
+    
+    # Kiểm tra API key
+    if token != API_KEY:
+        logging.warning(f"Xác thực thất bại với key: {token[:5]}...")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="API Key không hợp lệ"
+        )
+    
+    return token
+
+# Route để kiểm tra định dạng xác thực
+@app.get("/api/auth/format")
+async def auth_format_info():
+    """Cung cấp thông tin về định dạng xác thực để trợ giúp client"""
+    return {
+        "format": "Bearer {api_key}",
+        "headerName": "Authorization",
+        "example": "Authorization: Bearer your-api-key-here"
+    }
+
+# Endpoint WebSocket với xác thực
+@app.websocket("/ws/robot/{robot_id}")
+async def websocket_endpoint(websocket: WebSocket, robot_id: str):
+    authorization = websocket.headers.get("Authorization")
+    
+    # Kiểm tra xác thực
+    try:
+        if not authorization:
+            await websocket.close(code=status.HTTP_401_UNAUTHORIZED)
+            logging.warning(f"Kết nối WebSocket từ chối: Không có header Authorization")
+            return
+            
+        # Kiểm tra định dạng "Bearer {API_KEY}"
+        if not authorization.startswith("Bearer "):
+            await websocket.close(code=status.HTTP_401_UNAUTHORIZED)
+            logging.warning(f"Kết nối WebSocket từ chối: Header Authorization không đúng định dạng")
+            return
+        
+        # Lấy API key từ header
+        token = authorization.replace("Bearer ", "")
+        
+        # Kiểm tra API key
+        if token != API_KEY:
+            await websocket.close(code=status.HTTP_403_FORBIDDEN)
+            logging.warning(f"Kết nối WebSocket từ chối: API Key không hợp lệ")
+            return
+            
+        # Xác thực thành công - chấp nhận kết nối
+        await websocket.accept()
+        logging.info(f"Kết nối WebSocket chấp nhận cho robot: {robot_id}")
+        
+        # Gửi tin nhắn chào mừng
+        await websocket.send_json({
+            "type": "welcome",
+            "message": f"Xin chào robot {robot_id}",
+            "timestamp": time.time()
+        })
+        
+        # Tiếp tục xử lý WebSocket
+        try:
+            while True:
+                data = await websocket.receive_text()
+                message = json.loads(data)
+                
+                # Xử lý tin nhắn
+                # ...
+                
+                # Gửi phản hồi
+                await websocket.send_json({
+                    "type": "ack",
+                    "timestamp": time.time()
+                })
+                
+        except WebSocketDisconnect:
+            logging.info(f"Robot {robot_id} đã ngắt kết nối")
+        
+    except Exception as e:
+        logging.error(f"Lỗi xử lý WebSocket: {e}")
+        await websocket.close(code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 if __name__ == "__main__":
     import uvicorn

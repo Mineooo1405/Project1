@@ -28,22 +28,32 @@ ChartJS.register(
 
 // IMU data structure
 interface IMUData {
-  orientation: {
+  // Các trường có trong database
+  roll: number;
+  pitch: number;
+  yaw: number;
+  quat_w: number;
+  quat_x: number;
+  quat_y: number;
+  quat_z: number;
+  timestamp: string;
+  
+  // Các trường phái sinh - tính toán từ dữ liệu thô (tùy chọn)
+  orientation?: {
     roll: number;
     pitch: number;
     yaw: number;
   };
-  acceleration: {
+  acceleration?: {
     x: number;
     y: number;
     z: number;
   };
-  angular_velocity: {
+  angular_velocity?: {
     x: number;
     y: number;
     z: number;
   };
-  timestamp: string;
 }
 
 // Maximum number of data points to keep for charts
@@ -58,9 +68,13 @@ const IMUWidget: React.FC = () => {
 
   // State
   const [imuData, setImuData] = useState<IMUData>({
-    orientation: { roll: 0, pitch: 0, yaw: 0 },
-    acceleration: { x: 0, y: 0, z: 0 },
-    angular_velocity: { x: 0, y: 0, z: 0 },
+    roll: 0,
+    pitch: 0,
+    yaw: 0,
+    quat_w: 1,
+    quat_x: 0,
+    quat_y: 0,
+    quat_z: 0,
     timestamp: new Date().toISOString()
   });
   
@@ -94,17 +108,35 @@ const IMUWidget: React.FC = () => {
   // Handle WebSocket messages
   const handleWSMessage = (data: any) => {
     if (data.type === 'imu_data' || (data.type === 'initial_data' && data.imu)) {
-      const imuData = data.type === 'imu_data' ? data : data.imu;
+      const rawImuData = data.type === 'imu_data' ? data : data.imu;
       
-      // Update current IMU data
-      setImuData({
-        orientation: imuData.orientation || { roll: 0, pitch: 0, yaw: 0 },
-        acceleration: imuData.acceleration || { x: 0, y: 0, z: 0 },
-        angular_velocity: imuData.angular_velocity || { x: 0, y: 0, z: 0 },
-        timestamp: imuData.timestamp || new Date().toISOString()
-      });
+      // Tạo dữ liệu IMU từ định dạng mới
+      const processedData: IMUData = {
+        // Lấy trực tiếp các giá trị từ database
+        roll: rawImuData.roll || 0,
+        pitch: rawImuData.pitch || 0,
+        yaw: rawImuData.yaw || 0,
+        quat_w: rawImuData.quat_w || 1,
+        quat_x: rawImuData.quat_x || 0,
+        quat_y: rawImuData.quat_y || 0,
+        quat_z: rawImuData.quat_z || 0,
+        timestamp: rawImuData.timestamp || new Date().toISOString(),
+        
+        // Tạo các trường phái sinh nếu không có
+        orientation: rawImuData.orientation || {
+          roll: rawImuData.roll || 0,
+          pitch: rawImuData.pitch || 0,
+          yaw: rawImuData.yaw || 0
+        },
+        
+        // Các giá trị này có thể không có trong database, nhưng cần cho UI
+        acceleration: rawImuData.acceleration || { x: 0, y: 0, z: 0 },
+        angular_velocity: rawImuData.angular_velocity || { x: 0, y: 0, z: 0 }
+      };
       
-      // Update history for charts
+      setImuData(processedData);
+      
+      // Cập nhật lịch sử cho biểu đồ
       setHistory(prev => {
         const timestamp = new Date().toLocaleTimeString();
         const newTimestamps = [...prev.timestamps, timestamp].slice(-MAX_HISTORY_POINTS);
@@ -112,19 +144,19 @@ const IMUWidget: React.FC = () => {
         return {
           timestamps: newTimestamps,
           orientation: {
-            roll: [...prev.orientation.roll, imuData.orientation?.roll || 0].slice(-MAX_HISTORY_POINTS),
-            pitch: [...prev.orientation.pitch, imuData.orientation?.pitch || 0].slice(-MAX_HISTORY_POINTS),
-            yaw: [...prev.orientation.yaw, imuData.orientation?.yaw || 0].slice(-MAX_HISTORY_POINTS)
+            roll: [...prev.orientation.roll, processedData.roll].slice(-MAX_HISTORY_POINTS),
+            pitch: [...prev.orientation.pitch, processedData.pitch].slice(-MAX_HISTORY_POINTS),
+            yaw: [...prev.orientation.yaw, processedData.yaw].slice(-MAX_HISTORY_POINTS)
           },
           acceleration: {
-            x: [...prev.acceleration.x, imuData.acceleration?.x || 0].slice(-MAX_HISTORY_POINTS),
-            y: [...prev.acceleration.y, imuData.acceleration?.y || 0].slice(-MAX_HISTORY_POINTS),
-            z: [...prev.acceleration.z, imuData.acceleration?.z || 0].slice(-MAX_HISTORY_POINTS)
+            x: [...prev.acceleration.x, processedData.acceleration?.x || 0].slice(-MAX_HISTORY_POINTS),
+            y: [...prev.acceleration.y, processedData.acceleration?.y || 0].slice(-MAX_HISTORY_POINTS),
+            z: [...prev.acceleration.z, processedData.acceleration?.z || 0].slice(-MAX_HISTORY_POINTS)
           },
           angular_velocity: {
-            x: [...prev.angular_velocity.x, imuData.angular_velocity?.x || 0].slice(-MAX_HISTORY_POINTS),
-            y: [...prev.angular_velocity.y, imuData.angular_velocity?.y || 0].slice(-MAX_HISTORY_POINTS),
-            z: [...prev.angular_velocity.z, imuData.angular_velocity?.z || 0].slice(-MAX_HISTORY_POINTS)
+            x: [...prev.angular_velocity.x, processedData.angular_velocity?.x || 0].slice(-MAX_HISTORY_POINTS),
+            y: [...prev.angular_velocity.y, processedData.angular_velocity?.y || 0].slice(-MAX_HISTORY_POINTS),
+            z: [...prev.angular_velocity.z, processedData.angular_velocity?.z || 0].slice(-MAX_HISTORY_POINTS)
           }
         };
       });
@@ -201,7 +233,7 @@ const IMUWidget: React.FC = () => {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
     // Draw orientation visualization - simplified representation
-    const { roll, pitch, yaw } = imuData.orientation;
+    const { roll, pitch, yaw } = imuData.orientation || { roll: 0, pitch: 0, yaw: 0 };
     const centerX = canvas.width / 2;
     const centerY = canvas.height / 2;
     const radius = Math.min(centerX, centerY) - 10;
@@ -421,15 +453,15 @@ const IMUWidget: React.FC = () => {
           <div className="grid grid-cols-3 gap-2 text-center">
             <div className="p-2 bg-red-50 rounded">
               <div className="text-xs text-gray-500">Roll</div>
-              <div className="font-bold">{formatAngle(imuData.orientation.roll)}</div>
+              <div className="font-bold">{formatAngle(imuData.orientation?.roll || 0)}</div>
             </div>
             <div className="p-2 bg-green-50 rounded">
               <div className="text-xs text-gray-500">Pitch</div>
-              <div className="font-bold">{formatAngle(imuData.orientation.pitch)}</div>
+              <div className="font-bold">{formatAngle(imuData.orientation?.pitch || 0)}</div>
             </div>
             <div className="p-2 bg-blue-50 rounded">
               <div className="text-xs text-gray-500">Yaw</div>
-              <div className="font-bold">{formatAngle(imuData.orientation.yaw)}</div>
+              <div className="font-bold">{formatAngle(imuData.orientation?.yaw || 0)}</div>
             </div>
           </div>
         </div>
@@ -444,15 +476,15 @@ const IMUWidget: React.FC = () => {
               <div className="grid grid-cols-3 gap-2">
                 <div className="p-2 bg-gray-50 rounded">
                   <div className="text-xs text-gray-500">X-axis</div>
-                  <div className="font-medium">{imuData.acceleration.x.toFixed(3)}</div>
+                  <div className="font-medium">{imuData.acceleration?.x.toFixed(3)}</div>
                 </div>
                 <div className="p-2 bg-gray-50 rounded">
                   <div className="text-xs text-gray-500">Y-axis</div>
-                  <div className="font-medium">{imuData.acceleration.y.toFixed(3)}</div>
+                  <div className="font-medium">{imuData.acceleration?.y.toFixed(3)}</div>
                 </div>
                 <div className="p-2 bg-gray-50 rounded">
                   <div className="text-xs text-gray-500">Z-axis</div>
-                  <div className="font-medium">{imuData.acceleration.z.toFixed(3)}</div>
+                  <div className="font-medium">{imuData.acceleration?.z.toFixed(3)}</div>
                 </div>
               </div>
             </div>
@@ -462,15 +494,15 @@ const IMUWidget: React.FC = () => {
               <div className="grid grid-cols-3 gap-2">
                 <div className="p-2 bg-gray-50 rounded">
                   <div className="text-xs text-gray-500">X-axis</div>
-                  <div className="font-medium">{imuData.angular_velocity.x.toFixed(3)}</div>
+                  <div className="font-medium">{imuData.angular_velocity?.x.toFixed(3)}</div>
                 </div>
                 <div className="p-2 bg-gray-50 rounded">
                   <div className="text-xs text-gray-500">Y-axis</div>
-                  <div className="font-medium">{imuData.angular_velocity.y.toFixed(3)}</div>
+                  <div className="font-medium">{imuData.angular_velocity?.y.toFixed(3)}</div>
                 </div>
                 <div className="p-2 bg-gray-50 rounded">
                   <div className="text-xs text-gray-500">Z-axis</div>
-                  <div className="font-medium">{imuData.angular_velocity.z.toFixed(3)}</div>
+                  <div className="font-medium">{imuData.angular_velocity?.z.toFixed(3)}</div>
                 </div>
               </div>
             </div>

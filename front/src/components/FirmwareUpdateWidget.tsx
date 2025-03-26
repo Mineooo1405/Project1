@@ -1,77 +1,70 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { Upload, AlertCircle, Check, RefreshCw } from "lucide-react";
-import { useWebSocket, WebSocketEndpoint } from '../services/WebSocketManager';
-
-// Thêm khai báo type để mở rộng WebSocketEndpoint
-//type ExtendedEndpoint = WebSocketEndpoint | '/ws/firmware';
+import tcpWebSocketService from '../services/TcpWebSocketService';
+import { useRobotContext } from './RobotContext';
 
 const FirmwareUpdateWidget: React.FC = () => {
+  const { selectedRobotId } = useRobotContext();
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'success' | 'error'>('idle');
   const [progress, setProgress] = useState(0);
-  const [isUploading, setIsUploading] = useState(false);
-  const [showSuccessMessage, setShowSuccessMessage] = useState(false);
-  const [showErrorMessage, setShowErrorMessage] = useState(false);
-  const [errorMessage, setErrorMessage] = useState("");
+  const [errorMessage, setErrorMessage] = useState('');
+  const [currentVersion, setCurrentVersion] = useState('1.0.0');
+  const [isConnected, setIsConnected] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Cập nhật cách gọi hook useWebSocket theo định dạng mới
-  const {
-    status,
-    isConnected,
-    connect,
-    disconnect,
-    sendMessage
-  } = useWebSocket('/ws/server', {
-    autoConnect: false,
-    onMessage: (data) => {
-      if (data.type === "status") {
-        // Không làm gì
-      } else if (data.type === "progress") {
-        setProgress(data.value);
-      } else if (data.type === "client_connected") {
-        // Không làm gì
-      } else if (data.type === "upload_complete") {
-        setIsUploading(false);
-        setShowSuccessMessage(true);
-        setTimeout(() => setShowSuccessMessage(false), 3000);
-      } else if (data.type === "error") {
-        setErrorMessage(data.message || "Unknown error");
-        setShowErrorMessage(true);
-        setIsUploading(false);
-        setTimeout(() => setShowErrorMessage(false), 5000);
+  useEffect(() => {
+    const handleConnectionChange = (connected: boolean) => {
+      setIsConnected(connected);
+    };
+    
+    tcpWebSocketService.onConnectionChange(handleConnectionChange);
+    
+    const handleMessage = (message: any) => {
+      if (message.type === "firmware_response") {
+        if (message.status === "success") {
+          setUploadStatus('success');
+          setTimeout(() => setUploadStatus('idle'), 3000);
+        } else if (message.status === "error") {
+          setErrorMessage(message.message || "Unknown error");
+          setUploadStatus('error');
+          setTimeout(() => setUploadStatus('idle'), 5000);
+        }
+      } else if (message.type === "progress") {
+        setProgress(message.value);
       }
-    },
-    onConnect: () => {
-      // Thông báo server rằng chúng ta muốn kết nối cho firmware updates
-      sendMessage({ action: "start_firmware_server" });
-    },
-    onError: () => {
-      setErrorMessage("Connection error");
-      setShowErrorMessage(true);
-      setTimeout(() => setShowErrorMessage(false), 5000);
-    }
-  });
-
-  const startFirmwareServer = () => {
-    connect();
-  };
+    };
+    
+    tcpWebSocketService.onMessage("firmware_response", handleMessage);
+    tcpWebSocketService.onMessage("progress", handleMessage);
+    
+    return () => {
+      tcpWebSocketService.offConnectionChange(handleConnectionChange);
+      tcpWebSocketService.offMessage("firmware_response", handleMessage);
+      tcpWebSocketService.offMessage("progress", handleMessage);
+    };
+  }, []);
 
   const sendFirmware = async () => {
     if (!selectedFile || !isConnected) {
       setErrorMessage("No file selected or not connected");
-      setShowErrorMessage(true);
-      setTimeout(() => setShowErrorMessage(false), 5000);
+      setUploadStatus('error');
+      setTimeout(() => setUploadStatus('idle'), 5000);
       return;
     }
     
     try {
-      setIsUploading(true);
+      setUploadStatus('uploading');
       setProgress(0);
       
-      sendMessage({
-        action: "upload_firmware",
+      tcpWebSocketService.sendMessage({
+        type: "firmware_update",
+        robot_id: selectedRobotId,
         filename: selectedFile.name,
-        filesize: selectedFile.size
+        filesize: selectedFile.size,
+        version: "1.0.1",
+        frontend: true,
+        timestamp: Date.now() / 1000
       });
       
       const reader = new FileReader();
@@ -81,7 +74,7 @@ const FirmwareUpdateWidget: React.FC = () => {
         const arrayBuffer = reader.result as ArrayBuffer;
         const bytes = new Uint8Array(arrayBuffer);
         
-        const chunkSize = 1024 * 64; // 64KB chunks
+        const chunkSize = 1024 * 64;
         const totalChunks = Math.ceil(bytes.length / chunkSize);
         
         for (let i = 0; i < totalChunks; i++) {
@@ -95,31 +88,35 @@ const FirmwareUpdateWidget: React.FC = () => {
               .join('')
           );
           
-          sendMessage({
-            action: "upload_chunk",
+          tcpWebSocketService.sendMessage({
+            type: "firmware_chunk",
+            robot_id: selectedRobotId,
             chunk_index: i,
             total_chunks: totalChunks,
-            data: base64Chunk
+            data: base64Chunk,
+            frontend: true,
+            timestamp: Date.now() / 1000
           });
           
-          // Update progress locally since we're not waiting for server responses
           const currentProgress = Math.round((i + 1) / totalChunks * 100);
           if (currentProgress > progress) {
             setProgress(currentProgress);
           }
         }
         
-        sendMessage({
-          action: "upload_complete"
+        tcpWebSocketService.sendMessage({
+          type: "firmware_complete",
+          robot_id: selectedRobotId,
+          frontend: true,
+          timestamp: Date.now() / 1000
         });
       };
       
     } catch (error) {
       console.error("Failed to send firmware:", error);
-      setIsUploading(false);
+      setUploadStatus('error');
       setErrorMessage("Failed to send firmware");
-      setShowErrorMessage(true);
-      setTimeout(() => setShowErrorMessage(false), 5000);
+      setTimeout(() => setUploadStatus('idle'), 5000);
     }
   };
 
@@ -129,103 +126,116 @@ const FirmwareUpdateWidget: React.FC = () => {
     
     if (file) {
       setProgress(0);
-      setShowErrorMessage(false);
-      setShowSuccessMessage(false);
+      setUploadStatus('idle');
+      setErrorMessage('');
     }
   };
 
+  const checkCurrentVersion = () => {
+    tcpWebSocketService.sendMessage({
+      type: "check_firmware_version",
+      robot_id: selectedRobotId,
+      frontend: true,
+      timestamp: Date.now() / 1000
+    });
+  };
+
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className={`w-3 h-3 rounded-full ${isConnected ? "bg-green-500" : "bg-red-500"}`}></div>
-          <span className="text-sm font-medium">{status}</span>
-        </div>
-      </div>
+    <div className="bg-white p-4 rounded-lg shadow border">
+      <h3 className="text-lg font-medium mb-4">Cập Nhật Firmware</h3>
       
-      <div className="flex flex-wrap gap-2">
-        <button
-          onClick={startFirmwareServer}
-          disabled={isConnected}
-          className="flex items-center gap-2 bg-blue-600 text-white px-3 py-2 rounded-md text-sm hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-not-allowed"
+      <div className="mb-4 flex items-center bg-blue-50 p-3 rounded-md text-blue-700">
+        <AlertCircle size={20} className="mr-2" />
+        <div>
+          <p className="font-medium">Robot: {selectedRobotId}</p>
+          <p className="text-sm">Phiên bản hiện tại: {currentVersion}</p>
+        </div>
+        <button 
+          onClick={checkCurrentVersion} 
+          className="ml-auto p-1 hover:bg-blue-100 rounded-full"
+          title="Kiểm tra phiên bản"
         >
-          <RefreshCw size={16} className={status === 'connecting' ? 'animate-spin' : ''} />
-          {isConnected ? "Connected" : status === 'connecting' ? "Connecting..." : "Start Firmware Server"}
+          <RefreshCw size={16} />
         </button>
-        
-        {isConnected && (
-          <>
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="flex items-center gap-2 bg-gray-600 text-white px-3 py-2 rounded-md text-sm hover:bg-gray-700"
-            >
-              <Upload size={16} />
-              Choose Firmware
-            </button>
-            
-            <button
-              onClick={sendFirmware}
-              disabled={!selectedFile || isUploading}
-              className="flex items-center gap-2 bg-green-600 text-white px-3 py-2 rounded-md text-sm hover:bg-green-700 disabled:bg-green-400 disabled:cursor-not-allowed"
-            >
-              {isUploading ? <RefreshCw size={16} className="animate-spin" /> : <Upload size={16} />}
-              Send Firmware
-            </button>
-          </>
-        )}
-        
-        {isConnected && (
-          <button
-            onClick={disconnect}
-            className="flex items-center gap-2 bg-red-600 text-white px-3 py-2 rounded-md text-sm hover:bg-red-700"
-          >
-            Disconnect
-          </button>
-        )}
       </div>
       
-      <input 
-        type="file" 
-        ref={fileInputRef}
-        onChange={handleFileChange}
-        accept=".bin"
-        style={{ display: 'none' }}
-      />
-      
-      {selectedFile && (
-        <div className="flex items-center gap-2 bg-gray-100 p-2 rounded-md text-sm">
-          <span>Selected: {selectedFile.name} ({(selectedFile.size / 1024).toFixed(1)} KB)</span>
+      <div className="mb-4">
+        <label className="block text-sm font-medium text-gray-700 mb-1">
+          Chọn file firmware (.bin)
+        </label>
+        <div className="flex items-center">
+          <input
+            type="file"
+            accept=".bin"
+            onChange={handleFileChange}
+            className="hidden"
+            id="firmware-file"
+            ref={fileInputRef}
+          />
+          <label
+            htmlFor="firmware-file"
+            className="px-4 py-2 bg-gray-100 text-gray-800 rounded-l-md hover:bg-gray-200 cursor-pointer"
+          >
+            Chọn file
+          </label>
+          <div className="flex-grow px-3 py-2 bg-gray-50 rounded-r-md border-l truncate">
+            {selectedFile ? selectedFile.name : 'Chưa có file nào được chọn'}
+          </div>
         </div>
-      )}
+      </div>
       
-      {isUploading && (
-        <div className="w-full">
-          <div className="flex justify-between text-xs mb-1">
-            <span>Uploading firmware...</span>
+      {uploadStatus === 'uploading' && (
+        <div className="mb-4">
+          <div className="flex justify-between text-sm mb-1">
+            <span>Đang tải lên...</span>
             <span>{progress}%</span>
           </div>
           <div className="w-full bg-gray-200 rounded-full h-2">
             <div 
-              className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+              className="bg-blue-600 h-2 rounded-full" 
               style={{ width: `${progress}%` }}
-            ></div>
+            />
           </div>
         </div>
       )}
       
-      {showSuccessMessage && (
-        <div className="flex items-center gap-2 bg-green-100 text-green-800 p-2 rounded-md text-sm">
-          <Check size={16} />
-          <span>Firmware uploaded successfully!</span>
+      {uploadStatus === 'error' && (
+        <div className="mb-4 bg-red-50 border-l-4 border-red-500 text-red-700 p-3 rounded">
+          <p className="font-medium">Lỗi</p>
+          <p>{errorMessage}</p>
         </div>
       )}
       
-      {showErrorMessage && (
-        <div className="flex items-center gap-2 bg-red-100 text-red-800 p-2 rounded-md text-sm">
-          <AlertCircle size={16} />
-          <span>{errorMessage}</span>
+      {uploadStatus === 'success' && (
+        <div className="mb-4 bg-green-50 border-l-4 border-green-500 text-green-700 p-3 rounded flex items-center">
+          <Check size={16} className="mr-2" />
+          <p>Firmware đã được cập nhật thành công!</p>
         </div>
       )}
+      
+      <div className="flex justify-end mt-2">
+        <button
+          onClick={sendFirmware}
+          disabled={!selectedFile || uploadStatus === 'uploading'}
+          className={`px-4 py-2 rounded-md flex items-center gap-2
+            ${!selectedFile || uploadStatus === 'uploading' 
+              ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+              : 'bg-blue-600 text-white hover:bg-blue-700'
+            }`}
+        >
+          {uploadStatus === 'uploading' ? (
+            <>
+              <RefreshCw size={16} className="animate-spin" />
+              <span>Đang tải lên...</span>
+            </>
+          ) : (
+            <>
+              <Upload size={16} />
+              <span>Cập nhật firmware</span>
+            </>
+          )}
+        </button>
+      </div>
     </div>
   );
 };

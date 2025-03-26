@@ -11,7 +11,7 @@ interface RobotStatus {
   connected: boolean;
   lastUpdate: Date | null;
   encoders: {
-    values: number[];
+    values: number[];  // Hoặc có thể đổi tên thành rpm
     rpm: number[];
   };
   pid: {
@@ -28,10 +28,22 @@ interface RobotStatus {
     voltage: number;
     percent: number;
   };
-  trajectory?: {
-    currentPosition: { x: number; y: number; theta: number };
-    points: { x: number[]; y: number[]; theta: number[] };
+}
+
+// Cập nhật interface Trajectory để phù hợp với TrajectoryData
+interface Trajectory {
+  currentPosition: {
+    x: number;
+    y: number;
+    theta: number;
   };
+  points: {
+    x: number[];
+    y: number[];
+    theta: number[];
+  };
+  status: string;
+  progress_percent: number;
 }
 
 // Khởi tạo trạng thái robot mặc định
@@ -79,12 +91,11 @@ const RobotStatusWidget: React.FC = () => {
   });
 
   // Add this new state for trajectory data that matches our new structure
-  const [trajectory, setTrajectory] = useState<{
-    currentPosition: { x: number; y: number; theta: number };
-    points: { x: number[]; y: number[]; theta: number[] };
-  }>({
+  const [trajectory, setTrajectory] = useState<Trajectory>({
     currentPosition: { x: 0, y: 0, theta: 0 },
-    points: { x: [0], y: [0], theta: [0] }
+    points: { x: [0], y: [0], theta: [0] },
+    status: 'unknown',
+    progress_percent: 0
   });
 
   // Xử lý tin nhắn WebSocket
@@ -133,16 +144,19 @@ const RobotStatusWidget: React.FC = () => {
 
       setError(null);
     } else if (data.type === 'trajectory_data' || data.type === 'trajectory_update') {
-      // Handle the new trajectory data format
-      if (data.trajectory) {
-        setTrajectory(data.trajectory);
-      } else if (data.current_position && data.points) {
-        // Alternative format support
-        setTrajectory({
-          currentPosition: data.current_position,
-          points: data.points
-        });
-      }
+      // Chuyển đổi dữ liệu cho phù hợp với định dạng mới
+      const trajectory: Trajectory = {
+        currentPosition: {
+          x: data.current_x || 0,
+          y: data.current_y || 0,
+          theta: data.current_theta || 0
+        },
+        points: data.points || { x: [], y: [], theta: [] },
+        status: data.status || 'unknown',
+        progress_percent: data.progress_percent || 0
+      };
+      
+      setTrajectory(trajectory);
       
       setLoading(false);
     } else if (data.type === 'error') {
@@ -610,17 +624,6 @@ const RobotStatusWidget: React.FC = () => {
             </div>
           </div>
         </div>
-      </div>
-
-      {/* Nút reset dữ liệu */}
-      <div className="flex justify-center">
-        <button
-          onClick={resetData}
-          className="px-4 py-2 bg-red-100 text-red-600 rounded-md hover:bg-red-200 flex items-center gap-2"
-        >
-          <RotateCcw size={16} />
-          <span>Đặt lại tất cả dữ liệu</span>
-        </button>
       </div>
     </div>
   );

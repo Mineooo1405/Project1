@@ -6,12 +6,13 @@ import MainArea from "./MainArea";
 import WebSocketTester from "./WebSocketTester";
 import ConnectionStatusWidget from "./ConnectionStatusWidget";
 import PIDControlWidget from "./PIDControlWidget";
-import TrajectoryVisualizationWidget from "./TrajectoryVisualizationWidget";
+import TrajectoryWidget from "./TrajectoryWidget"; // Sử dụng phiên bản TS
 import RobotStatusWidget from "./RobotStatusWidget";
-import MotorControlWidget from "./MotorControlWidget";
 import FirmwareUpdateWidget from "./FirmwareUpdateWidget";
 import ServerControlWidget from "./ServerControlWidget";
-import IMUVisualizationWidget from "./IMUVisualizationWidget";
+import IMUWidget from "./IMUWidget"; // Sử dụng phiên bản chính
+import EncoderDataWidget from "./EncoderDataWidget"; // Thêm mới
+import RobotControlWidget from "./RobotControlWidget"; // Thêm widget điều khiển mới
 
 interface PlacedWidgetProps {
   id: string;
@@ -112,22 +113,28 @@ const PlacedWidget: React.FC<PlacedWidgetProps> = ({
   // Render nội dung widget dựa trên loại
   const renderContent = () => {
     switch (type) {
-        case "robot-status":
-            return <RobotStatusWidget />;
-          case "server-control":
-            return <ServerControlWidget />;
-          case "trajectory-visualization":
-            return <TrajectoryVisualizationWidget />;
-          case "pid-control":
-            return <PIDControlWidget />;
-          case "firmware-update":
-            return <FirmwareUpdateWidget />;
-          case "motor-control":
-            return <MotorControlWidget />;
-          case "connection-status":
-            return <ConnectionStatusWidget />;
-          case "imu-visualization":
-            return <IMUVisualizationWidget />;
+      case "robot-status":
+        return <RobotStatusWidget />;
+      case "server-control":
+        return <ServerControlWidget />;
+      case "trajectory-visualization":
+      case "trajectory": // Hỗ trợ cả 2 ID
+        return <TrajectoryWidget />;
+      case "pid-control":
+        return <PIDControlWidget />;
+      case "firmware-update":
+        return <FirmwareUpdateWidget />;
+      case "motor-control": 
+        return <RobotControlWidget />; // Thay MotorControlWidget bằng RobotControlWidget
+      case "connection-status":
+        return <ConnectionStatusWidget />;
+      case "imu-visualization":
+      case "imu": // Hỗ trợ cả 2 ID
+        return <IMUWidget />;
+      case "encoder-data":
+        return <EncoderDataWidget />;
+      case "robot-control":
+        return <RobotControlWidget />;
       default:
         return (
           <div className="p-4 text-center">
@@ -143,11 +150,15 @@ const PlacedWidget: React.FC<PlacedWidgetProps> = ({
     switch (type) {
       case "server-control": return "Server Control";
       case "trajectory": return "Trajectory";
+      case "trajectory-visualization": return "Trajectory";
       case "pid-control": return "PID Control";
       case "firmware-update": return "Firmware Update";
-      case "motor-control": return "Motor Control";
+      case "motor-control": return "Robot Control"; // Cập nhật tên hiển thị
       case "connection-status": return "Connection Status";
       case "robot-control": return "Robot Control";
+      case "imu-visualization": return "IMU Data";
+      case "imu": return "IMU Data";
+      case "encoder-data": return "Encoder Data";
       default: return type.split('-').map(word => 
         word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
     }

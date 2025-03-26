@@ -5,9 +5,8 @@ import MainArea from "./components/MainArea";
 import WebSocketTester from "./components/WebSocketTester";
 import ConnectionStatusWidget from "./components/ConnectionStatusWidget";
 import PIDControlWidget from "./components/PIDControlWidget";
-import TrajectoryVisualizationWidget from "./components/TrajectoryVisualizationWidget";
+import TrajectoryWidget from "./components/TrajectoryWidget"; // Sử dụng phiên bản TS
 import RobotStatusWidget from "./components/RobotStatusWidget";
-import MotorControlWidget from "./components/MotorControlWidget";
 import FirmwareUpdateWidget from "./components/FirmwareUpdateWidget";
 import ServerControlWidget from "./components/ServerControlWidget";
 import { DndProvider } from "react-dnd";
@@ -16,10 +15,10 @@ import { PlusCircle, Layers, Settings, MonitorSmartphone, ActivitySquare,
          WifiOff, Code, ChevronLeft, ChevronRight, Cpu, BarChart3, Activity, Gamepad } from "lucide-react";
 import DraggableWidget from "./components/DraggableWidget";
 import PlacedWidget from "./components/PlacedWidget";
-import IMUWidget from './components/IMUWidget';
-import IMUVisualizationWidget from "./components/IMUVisualizationWidget";
+import IMUWidget from './components/IMUWidget'; // Sử dụng phiên bản chính
+import EncoderDataWidget from './components/EncoderDataWidget'; // Thêm mới
 import TCPServerStatusButton from './components/TCPServerStatusButton';
-import RobotControlPanel from './components/RobotControlPanel';
+import RobotControlWidget from './components/RobotControlWidget'; // Thêm mới
 
 // Widget option definition
 interface WidgetOption {
@@ -59,10 +58,10 @@ const App: React.FC = () => {
       category: "monitoring"
     },
     {
-      id: "motor-control",
-      name: "Điều Khiển Động Cơ",
-      description: "Điều khiển trực tiếp tốc độ động cơ",
-      icon: <Cpu size={20} />,
+      id: "robot-control", // Thay "motor-control" thành "robot-control"
+      name: "Điều Khiển Robot",
+      description: "Điều khiển chuyển động của robot",
+      icon: <Gamepad size={20} />,
       category: "control"
     },
     {
@@ -73,17 +72,24 @@ const App: React.FC = () => {
       category: "configuration"
     },
     {
-      id: "trajectory-visualization",
+      id: "trajectory", // Đổi thành "trajectory" cho nhất quán
       name: "Quỹ Đạo Robot",
       description: "Hiển thị quỹ đạo chuyển động của robot",
       icon: <BarChart3 size={20} />,
       category: "monitoring"
     },
     {
-      id: "imu-visualization",
+      id: "imu", // Đổi thành "imu" cho nhất quán
       name: "Dữ Liệu IMU",
       description: "Hiển thị dữ liệu từ cảm biến IMU",
       icon: <Activity size={20} />,
+      category: "monitoring"
+    },
+    {
+      id: "encoder-data", // Thêm widget encoder
+      name: "Dữ Liệu Encoder",
+      description: "Hiển thị dữ liệu encoder của động cơ",
+      icon: <Cpu size={20} />,
       category: "monitoring"
     },
     {
@@ -106,13 +112,6 @@ const App: React.FC = () => {
       description: "Theo dõi tình trạng kết nối WebSocket",
       icon: <WifiOff size={20} />,
       category: "monitoring"
-    },
-    {
-      id: "robot-control",
-      name: "Điều Khiển Robot",
-      description: "Điều khiển chuyển động của robot",
-      icon: <Gamepad size={20} />,
-      category: "control"
     }
   ];
   
@@ -227,14 +226,14 @@ const App: React.FC = () => {
           size: { width: 500, height: 600 },
         },
         {
-          id: `motor-control-${Date.now() + 1}`,
-          type: "motor-control",
+          id: `robot-control-${Date.now() + 1}`, // Sử dụng robot-control thay vì motor-control
+          type: "robot-control",
           position: { x: 540, y: 20 },
           size: { width: 400, height: 300 },
         },
         {
-          id: `trajectory-visualization-${Date.now() + 2}`,
-          type: "trajectory-visualization",
+          id: `trajectory-${Date.now() + 2}`, // Đổi tên
+          type: "trajectory",
           position: { x: 540, y: 340 },
           size: { width: 400, height: 400 },
         },

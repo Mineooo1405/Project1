@@ -1,7 +1,4 @@
-/**
- * TCP WebSocket Service
- * Bổ sung hàm onConnectionChange để theo dõi trạng thái kết nối
- */
+import EventEmitter from 'events'; // Thêm import cho EventEmitter
 
 type MessageHandler = (message: any) => void;
 type ConnectionChangeCallback = (isConnected: boolean) => void;
@@ -12,21 +9,42 @@ export interface PIDValues {
   kd: number;
 }
 
+// Ví dụ cấu trúc của TcpWebSocketService
+interface TcpWebSocketService {
+  connect(): void;
+  disconnect(): void;
+  sendMessage(message: any): void;
+  onMessage(type: string, callback: (data: any) => void): void;
+  offMessage(type: string, callback: (data: any) => void): void;
+  onConnectionChange(callback: (connected: boolean) => void): void;
+  offConnectionChange(callback: (connected: boolean) => void): void;
+}
+
 class TcpWebSocketService {
-  private socket: WebSocket | null = null;
+  private ws: WebSocket | null = null;
+  private isWsConnected: boolean = false;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private eventEmitter = new EventEmitter();
+  private messageHandlers: Record<string, Set<MessageHandler>> = {}; // Sửa thành Set thay vì Function[]
   private url: string;
+
+  constructor() {
+    // Kết nối đến WebSocket Bridge thay vì FastAPI backend
+    const hostname = window.location.hostname;
+    this.url = `ws://${hostname}:9003`; // Loại bỏ /ws vì có thể là nguồn lỗi
+    
+    console.log(`TcpWebSocketService will connect to: ${this.url}`);
+    this.connect(); // Tự động kết nối khi khởi tạo
+  }
+
+  private socket: WebSocket | null = null;
   private _isConnected: boolean = false;
   private reconnectInterval: number = 5000;
-  private reconnectTimer: NodeJS.Timeout | null = null;
   private reconnectAttempts: number = 0;
   private maxReconnectAttempts: number = 5;
-  private messageHandlers: Map<string, Set<MessageHandler>> = new Map();
   private connectionListeners: Array<ConnectionChangeCallback> = [];
 
-  constructor(url: string) {
-    this.url = url;
-    this.connect();
-  }
+  // Đảm bảo URL đúng cho WebSocket Bridge
 
   /**
    * Đăng ký lắng nghe sự thay đổi trạng thái kết nối
@@ -57,10 +75,11 @@ class TcpWebSocketService {
     }
 
     try {
+      console.log(`Connecting to WebSocket at ${this.url}...`);
       this.socket = new WebSocket(this.url);
 
       this.socket.onopen = () => {
-        console.log('Kết nối WebSocket đã được thiết lập');
+        console.log('WebSocket connection established');
         this._isConnected = true;
         
         // Thông báo kết nối thành công
@@ -70,6 +89,7 @@ class TcpWebSocketService {
           clearTimeout(this.reconnectTimer);
           this.reconnectTimer = null;
         }
+        this.reconnectAttempts = 0; // Reset số lần thử kết nối
       };
 
       this.socket.onmessage = (event) => {
@@ -77,12 +97,12 @@ class TcpWebSocketService {
           const data = JSON.parse(event.data);
           this.handleMessage(data);
         } catch (error) {
-          console.error('Lỗi xử lý tin nhắn:', error);
+          console.error('Error processing message:', error);
         }
       };
 
       this.socket.onclose = () => {
-        console.log('Kết nối WebSocket đã đóng');
+        console.log('WebSocket connection closed');
         this._isConnected = false;
         
         // Thông báo ngắt kết nối
@@ -93,14 +113,14 @@ class TcpWebSocketService {
       };
 
       this.socket.onerror = (error) => {
-        console.error('Lỗi WebSocket:', error);
+        console.error('WebSocket error:', error);
         this._isConnected = false;
         
         // Thông báo lỗi kết nối
         this.notifyConnectionChange(false);
       };
     } catch (error) {
-      console.error('Lỗi kết nối WebSocket:', error);
+      console.error('Error connecting to WebSocket:', error);
       this._isConnected = false;
       
       // Thông báo lỗi kết nối
@@ -116,7 +136,7 @@ class TcpWebSocketService {
       try {
         listener(isConnected);
       } catch (error) {
-        console.error('Lỗi trong listener kết nối:', error);
+        console.error('Error in connection listener:', error);
       }
     });
   }
@@ -126,31 +146,31 @@ class TcpWebSocketService {
    */
   private handleMessage(data: any): void {
     // Xử lý tin nhắn chung
-    console.log('📥 Nhận từ TCP server:', data);
+    console.log('📥 Received from TCP server:', data);
     
     // Gọi các handlers cho các loại tin nhắn cụ thể
-    if (data.type && this.messageHandlers.has(data.type)) {
-      const handlers = this.messageHandlers.get(data.type);
+    if (data.type && this.messageHandlers[data.type]) {
+      const handlers = this.messageHandlers[data.type];
       if (handlers) {
         handlers.forEach(handler => {
           try {
             handler(data);
           } catch (error) {
-            console.error(`Lỗi trong handler cho tin nhắn loại ${data.type}:`, error);
+            console.error(`Error in handler for message type ${data.type}:`, error);
           }
         });
       }
     }
     
     // Gọi các handlers cho tất cả các tin nhắn
-    if (this.messageHandlers.has('*')) {
-      const handlers = this.messageHandlers.get('*');
+    if (this.messageHandlers['*']) {
+      const handlers = this.messageHandlers['*'];
       if (handlers) {
         handlers.forEach(handler => {
           try {
             handler(data);
           } catch (error) {
-            console.error('Lỗi trong handler cho tất cả tin nhắn:', error);
+            console.error('Error in handler for all messages:', error);
           }
         });
       }
@@ -162,24 +182,27 @@ class TcpWebSocketService {
    */
   sendMessage(message: any): boolean {
     if (!this._isConnected || !this.socket) {
-      console.error('Không thể gửi thông điệp: Chưa kết nối đến TCP server');
+      console.error('Cannot send message: Not connected to TCP server');
       return false;
     }
     
     try {
-      // Đảm bảo có trường timestamp
+      // Đảm bảo có trường timestamp và frontend=true
       if (!message.timestamp) {
         message.timestamp = Date.now() / 1000;
       }
+      if (!message.hasOwnProperty('frontend')) {
+        message.frontend = true;  // Đánh dấu tin nhắn từ frontend
+      }
       
       // Log thông điệp đang gửi
-      console.log('📤 Gửi đến TCP server:', message);
+      console.log('📤 Sending to TCP server:', message);
       
       // Gửi dưới dạng JSON string
       this.socket.send(JSON.stringify(message));
       return true;
     } catch (error) {
-      console.error('Lỗi gửi thông điệp đến TCP server:', error);
+      console.error('Error sending message to TCP server:', error);
       return false;
     }
   }
@@ -193,6 +216,7 @@ class TcpWebSocketService {
       robot_id: robotId,
       motor_id: motorId,
       parameters: parameters,
+      frontend: true,
       timestamp: Date.now() / 1000
     });
   }
@@ -204,6 +228,7 @@ class TcpWebSocketService {
     return this.sendMessage({
       type: "get_robot_connections",
       robot_id: "robot1", // Thêm robot_id mặc định
+      frontend: true,
       timestamp: Date.now() / 1000
     });
   }
@@ -215,6 +240,7 @@ class TcpWebSocketService {
     return this.sendMessage({
       type: "connect_robot_simulator",
       robot_id: robotId,
+      frontend: true,
       timestamp: Date.now() / 1000
     });
   }
@@ -223,17 +249,17 @@ class TcpWebSocketService {
    * Đăng ký handler cho loại thông điệp cụ thể
    */
   onMessage(type: string, handler: MessageHandler): void {
-    if (!this.messageHandlers.has(type)) {
-      this.messageHandlers.set(type, new Set());
+    if (!this.messageHandlers[type]) {
+      this.messageHandlers[type] = new Set<MessageHandler>();
     }
-    this.messageHandlers.get(type)!.add(handler);
+    this.messageHandlers[type].add(handler);
   }
   
   /**
    * Hủy đăng ký handler
    */
   offMessage(type: string, handler: MessageHandler): void {
-    const handlers = this.messageHandlers.get(type);
+    const handlers = this.messageHandlers[type];
     if (handlers) {
       handlers.delete(handler);
     }
@@ -265,17 +291,17 @@ class TcpWebSocketService {
     }
     
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.log('Đã đạt số lần thử kết nối lại tối đa');
+      console.log('Maximum reconnection attempts reached');
       return;
     }
     
     this.reconnectAttempts++;
     
     const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000);
-    console.log(`Thử kết nối lại sau ${delay}ms (lần thử ${this.reconnectAttempts})`);
+    console.log(`Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`);
     
     this.reconnectTimer = setTimeout(() => {
-      console.log('Đang kết nối lại...');
+      console.log('Reconnecting...');
       this.connect();
     }, delay);
   }
@@ -296,6 +322,6 @@ class TcpWebSocketService {
 }
 
 // Tạo instance singleton
-const tcpWebSocketService = new TcpWebSocketService(process.env.REACT_APP_TCP_WS_URL || 'ws://localhost:9002');
+const tcpWebSocketService = new TcpWebSocketService();
 
 export default tcpWebSocketService;
